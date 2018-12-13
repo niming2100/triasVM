@@ -1,11 +1,13 @@
 package trans
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/errors"
 	enConf "triasVM/config"
 	"triasVM/contract"
 	"triasVM/proto/tm"
-	futils "triasVM/utils"
+	t_utils "triasVM/utils"
 	"triasVM/validate"
 )
 
@@ -29,16 +31,25 @@ func (this *MWservice) ExecuteContract(request *tm.ExecuteContractRequest) (*tm.
 	}
 	// TODO CheckContract is install
 	var filePath = pathPrefix + request.GetContractName() + fileSuffix;
-	isExists, err := futils.PathExists(filePath);
+	isExists, err := t_utils.PathExists(filePath);
 	if err != nil {
 		fmt.Println("checkFilePathFails", err);
 	}
-
-	contract := contract.NewContract(enConf.PeerAddress, request.GetContractName(), request.GetContractType(), filePath, enConf.ContractVersion, enConf.ChannelID, enConf.OrdererOrgName, request.GetCommand());
+	var data map[string][]string;
+	if err := json.Unmarshal([]byte(request.GetCommand()), &data); err == nil {
+	} else {
+		return nil, err
+	}
+	stringArray := data["Args"];
+	if stringArray == nil || len(stringArray) == 0 {
+		return nil, errors.Errorf("command illegal")
+	}
+	args := t_utils.StringArrayToByte(stringArray);
+	contract := contract.NewContract(enConf.PeerAddress, request.GetContractName(), request.GetContractType(), filePath, enConf.ContractVersion, enConf.ChannelID, enConf.OrdererOrgName, args, request.GetOpration());
 	if !isExists {
 		//TODO downloadFile and install
 		//download file
-		err := futils.FileDownLoad(filePath, request.GetAddress());
+		err := t_utils.FileDownLoad(filePath, request.GetAddress());
 		if err != nil {
 			fmt.Println("Download contract happens a error", err);
 		}
@@ -50,7 +61,7 @@ func (this *MWservice) ExecuteContract(request *tm.ExecuteContractRequest) (*tm.
 		instantiated, err := contract.Instantiated();
 		if err != nil {
 			fmt.Println("check instantiated happens a error", err);
-			return nil,nil;
+			return nil, nil;
 		}
 		if !instantiated {
 			installErr := contract.InstallContract();
@@ -59,6 +70,7 @@ func (this *MWservice) ExecuteContract(request *tm.ExecuteContractRequest) (*tm.
 			}
 		}
 	}
-	contract.RunContract()
+	resp, err := contract.RunContract()
+
 	return nil, nil;
 }

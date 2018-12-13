@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric-sdk-go/pkg/client/channel"
 	"github.com/hyperledger/fabric-sdk-go/pkg/client/resmgmt"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/retry"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
@@ -18,11 +19,12 @@ type Contract struct {
 	contractVersion string
 	channelID       string
 	orgName         string
-	args            string
+	args            [][]byte
+	action          string
 }
 
-func NewContract(peerAddress string, contractName string, contractType string, contractPath string, contractVersion string, channelID string, orgName string, args string) *Contract {
-	return &Contract{peerAddress: peerAddress, contractName: contractName, contractType: contractType, contractPath: contractPath, contractVersion: contractVersion, channelID: channelID, orgName: orgName, args: args}
+func NewContract(peerAddress string, contractName string, contractType string, contractPath string, contractVersion string, channelID string, orgName string, args [][]byte, action string) *Contract {
+	return &Contract{peerAddress: peerAddress, contractName: contractName, contractType: contractType, contractPath: contractPath, contractVersion: contractVersion, channelID: channelID, orgName: orgName, args: args, action: action}
 }
 
 func (c *Contract) Instantiated() (bool, error) {
@@ -35,9 +37,53 @@ func (c *Contract) Instantiated() (bool, error) {
 	return instantiated, nil;
 }
 
-func (c *Contract) RunContract() {
-	//TODO run contract
+func (c *Contract) RunContract() ([]byte, error) {
+	sdk, err := fabsdk.New(en_config.ConfigBackend)
+	if err != nil {
+		return nil, err;
+	}
+	defer sdk.Close()
+	//prepare channel client context using client context
+	clientChannelContext := sdk.ChannelContext(c.channelID, fabsdk.WithUser(en_config.AdminUser), fabsdk.WithOrg(c.orgName))
 
+	// Channel client is used to query and execute transactions (Org1 is default org)
+	client, err := channel.New(clientChannelContext)
+
+	var resp []byte;
+	switch c.action {
+	case "query":
+		resp, err = c.queryCC(client);
+		break;
+	case "invoke":
+		resp, err = c.executeCC(client);
+		break;
+	default:
+		break;
+	}
+	return resp, nil;
+}
+
+func (c *Contract) executeCC(client *channel.Client) ([]byte, error) {
+	response, err := client.Execute(channel.Request{ChaincodeID: c.channelID, Fcn: c.action, Args: c.args},
+		channel.WithRetry(retry.DefaultChannelOpts))
+	if err != nil {
+		fmt.Println("Failed to move funds: %s", err)
+		return nil, err
+	}
+	fmt.Println(response)
+	return response.Payload, nil
+}
+
+func (c *Contract) queryCC(client *channel.Client) ([]byte, error) {
+	response, err := client.Query(channel.Request{ChaincodeID: c.channelID, Fcn: c.action, Args: c.args},
+		channel.WithRetry(retry.DefaultChannelOpts))
+	if err != nil {
+		fmt.Println("Failed to query funds: %s", err)
+		return nil, err
+	}
+	fmt.Println(response)
+
+	return response.Payload, nil
 }
 
 func queryInstantiatedCCWithSDK(sdk *fabsdk.FabricSDK, user fabsdk.ContextOption, orgName string, channelID, ccName, ccVersion string, transientRetry bool) (bool, error) {
@@ -76,7 +122,6 @@ func queryInstantiatedCC(resMgmt *resmgmt.Client, orgName string, channelID, ccN
 
 	return *instantiated.(*bool), nil
 }
-
 
 func isCCInstantiated(resMgmt *resmgmt.Client, channelID, ccName, ccVersion string) (bool, error) {
 	chaincodeQueryResponse, err := resMgmt.QueryInstantiatedChaincodes(channelID, resmgmt.WithRetry(retry.DefaultResMgmtOpts))
